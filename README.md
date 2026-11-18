@@ -53,9 +53,9 @@ kubectl describe pod api-7f8d | piq summarize why this pod is crash-looping
 # Attach files directly via Pi's @file syntax
 piq @error.log @config.yaml explain the mismatch causing this crash
 
-# Model tiers
-piq -f convert timestamp 1763480000 to UTC   # fast tier
-piq -s audit this script for race conditions # high-thinking tier
+# Model tiers: fast by default, -s for the smart (high-thinking) model
+piq convert timestamp 1763480000 to UTC      # fast tier (default)
+piq -s audit this script for race conditions # smart tier
 piq -m anthropic/claude-sonnet-4-5:medium explain main.rs
 ```
 
@@ -65,9 +65,9 @@ piq -m anthropic/claude-sonnet-4-5:medium explain main.rs
 | --- | --- |
 | `-x, --execute` | Allow `bash`, `write`, and `edit` so piq can run commands and modify files |
 | `-n, --dry-run` | Read-only tools (`read,ls,find,grep`); inspect and print commands without executing (default) |
-| `-f, --fast` | Use fast model tier (`PIQ_FAST_MODEL`, config `fastModel`, or auto-detected fast sibling) |
-| `-s, --smart` (`-t, --think`) | Use high-thinking model tier (`:high`) |
-| `-m, --model <id>` | Override model (`provider/model` with optional `:<thinking>`) |
+| `-s, --smart` (`-t, --think`) | Use the smart model tier (`PIQ_SMART_MODEL`, config `smartModel`, or Pi's default model at `:high`) |
+| `-f, --fast` | Use the fast model tier (the default; `PIQ_FAST_MODEL`, config `fastModel`, or an auto-detected fast sibling) |
+| `-m, --model <id>` | Override the model for this run (`provider/model` with optional `:<thinking>`) |
 | `-c, --context` | Load project `CLAUDE.md` / `AGENTS.md` context files (skipped by default for speed) |
 | `-0, --no-term` | Skip shell history, terminal scrollback, and `cwd` snapshot |
 | `-q, --quiet` | Suppress tool/retry progress on `stderr` (`stdout` answer only) |
@@ -136,23 +136,25 @@ Stdin from a shell pipe (`cmd | piq …`) or a redirected file (`piq … < file`
 
 ## Configuration & Model Resolution
 
-`piq` works out of the box by inheriting `defaultProvider` and `defaultModel` from `~/.pi/agent/settings.json` (using `:low` thinking by default, `:high` on `-s`, and auto-selecting any `flash`/`haiku`/`mini`/`nano`/`lite` model on the same provider for `-f`).
+`piq` has two model tiers and uses the **fast** tier by default; `-s` switches to the **smart** tier for harder questions. It works out of the box by inheriting `defaultProvider` and `defaultModel` from `~/.pi/agent/settings.json`:
+
+- **fast (default):** a `flash`/`haiku`/`mini`/`nano`/`lite` sibling of Pi's default model on the same provider, at `:low` thinking, or Pi's default model at `:low` if no sibling is found
+- **smart (`-s`):** Pi's default model at `:high` thinking
 
 To customize tiers persistently, create `~/.config/piq/config.json` (or set `$PIQ_CONFIG`):
 
 ```json
 {
-  "model": "anthropic/claude-sonnet-4-5:low",
   "fastModel": "anthropic/claude-haiku-4-5:low",
   "smartModel": "anthropic/claude-sonnet-4-5:high"
 }
 ```
 
-Environment variable overrides:
+Environment variable overrides (these take precedence over the config file):
 
-- `PIQ_MODEL` — default model (`provider/model[:thinking]`)
-- `PIQ_FAST_MODEL` — model for `-f` / `--fast`
+- `PIQ_FAST_MODEL` — default model (`provider/model[:thinking]`)
 - `PIQ_SMART_MODEL` — model for `-s` / `--smart`
+- `PIQ_MODEL` / config `model` — deprecated aliases for the fast model, used only when no fast model is set (`piq --config` flags them)
 - `PIQ_PI_BIN` — explicit path to `pi` executable
 - `PIQ_EXTENSIONS` — comma-separated Pi extensions to keep loaded under `--no-extensions`
 - `PIQ_DISABLE_ATUIN=1` — skip opportunistic Atuin SQLite lookup

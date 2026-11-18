@@ -39,7 +39,7 @@ test("parseArgs handles bundled flags, @files, -- passthrough, and preserves pos
   assert.equal(r1.execute, true);
   assert.equal(r1.quiet, true);
   assert.equal(r1.verbose, true);
-  assert.equal(r1.tier, "default");
+  assert.equal(r1.tier, "fast");
   assert.deepEqual(r1.fileArgs, ["@foo.txt"]);
   assert.deepEqual(r1.promptWords, ["init", "a", "git", "repo", "-f"]);
   assert.equal(r1.initShell, null);
@@ -66,10 +66,10 @@ test("parseArgs handles bundled flags, @files, -- passthrough, and preserves pos
 
 test("parseArgs stops reading options at the first prompt word", () => {
   const cases = [
-    [["what", "does", "ls", "-t", "do"], "what does ls -t do", { tier: "default" }],
+    [["what", "does", "ls", "-t", "do"], "what does ls -t do", { tier: "fast" }],
     [["explain", "git", "commit", "-m", "usage"], "explain git commit -m usage", { explicitModel: null }],
     [["how", "does", "head", "-n", "work"], "how does head -n work", {}],
-    [["what", "is", "rm", "-f"], "what is rm -f", { tier: "default" }],
+    [["what", "is", "rm", "-s"], "what is rm -s", { tier: "fast" }],
     [["run", "it", "with", "-x"], "run it with -x", { execute: false }],
     [["what", "is", "--execute", "for"], "what is --execute for", { execute: false }],
   ];
@@ -99,32 +99,46 @@ test("parseArgs is read-only by default; -x/--execute opt in, last of -n/-x wins
   assert.equal(bundled.explicitModel, "openai/gpt-5");
 });
 
-test("resolveModels inherits Pi settings, discovers fast siblings, and honors overrides", () => {
+test("resolveModels defaults to the fast tier, -s selects smart, and honors overrides", () => {
   const piSettings = {
     defaultProvider: "anthropic",
     defaultModel: "claude-sonnet-4-5",
     enabledModels: ["anthropic/claude-sonnet-4-5", "anthropic/claude-haiku-4-5"],
   };
+  const resolve = (opts) => resolveModels({ env: {}, piqConfig: {}, piSettings, piModels: {}, ...opts });
 
-  const def = resolveModels({ tier: "default", env: {}, piqConfig: {}, piSettings, piModels: {} });
-  assert.equal(def.selectedModel, "anthropic/claude-sonnet-4-5:low");
+  // Default (no tier passed) = fast: auto-detected sibling of Pi's default model
+  const def = resolve({});
+  assert.equal(def.selectedModel, "anthropic/claude-haiku-4-5:low");
   assert.equal(def.fastModel, "anthropic/claude-haiku-4-5:low");
   assert.equal(def.smartModel, "anthropic/claude-sonnet-4-5:high");
+  assert.equal(def.legacyModelStatus, "");
+  assert.equal(resolve({ tier: "fast" }).selectedModel, "anthropic/claude-haiku-4-5:low");
+  assert.equal(resolve({ tier: "smart" }).selectedModel, "anthropic/claude-sonnet-4-5:high");
+  assert.equal(resolve({ tier: "explicit", explicitModel: "openai/gpt-5" }).selectedModel, "openai/gpt-5");
 
-  const fast = resolveModels({ tier: "fast", env: {}, piqConfig: {}, piSettings, piModels: {} });
-  assert.equal(fast.selectedModel, "anthropic/claude-haiku-4-5:low");
-
-  const smart = resolveModels({ tier: "smart", env: {}, piqConfig: {}, piSettings, piModels: {} });
-  assert.equal(smart.selectedModel, "anthropic/claude-sonnet-4-5:high");
-
-  const envOver = resolveModels({
-    tier: "default",
-    env: { PIQ_MODEL: "openai/gpt-5:minimal" },
-    piqConfig: { model: "google/gemini-2.5-pro:low" },
-    piSettings,
+  // No fast sibling available: fall back to Pi's default model at :low
+  const noSibling = resolveModels({
+    env: {},
+    piqConfig: {},
+    piSettings: { defaultProvider: "anthropic", defaultModel: "claude-sonnet-4-5" },
     piModels: {},
   });
-  assert.equal(envOver.selectedModel, "openai/gpt-5:minimal");
+  assert.equal(noSibling.selectedModel, "anthropic/claude-sonnet-4-5:low");
+
+  // Env beats config; fastModel beats the deprecated `model` alias
+  assert.equal(
+    resolve({ env: { PIQ_FAST_MODEL: "openai/gpt-5-mini:low" }, piqConfig: { fastModel: "x/y:low" } }).selectedModel,
+    "openai/gpt-5-mini:low"
+  );
+  const ignored = resolve({ piqConfig: { model: "google/gemini-2.5-pro:low", fastModel: "google/gemini-2.5-flash:low" } });
+  assert.equal(ignored.selectedModel, "google/gemini-2.5-flash:low");
+  assert.equal(ignored.legacyModelStatus, "ignored");
+
+  // Deprecated `model` / PIQ_MODEL still work as the fast model when nothing newer is set
+  const legacy = resolve({ env: { PIQ_MODEL: "openai/gpt-5:minimal" }, piqConfig: { model: "google/gemini-2.5-pro:low" } });
+  assert.equal(legacy.selectedModel, "openai/gpt-5:minimal");
+  assert.equal(legacy.legacyModelStatus, "used");
   assert.deepEqual(splitModelSpec("vertex-maas/deepseek-ai/deepseek-r1:low"), {
     full: "vertex-maas/deepseek-ai/deepseek-r1:low",
     baseModel: "vertex-maas/deepseek-ai/deepseek-r1",

@@ -35,7 +35,6 @@ const isTTYErr = Boolean(process.stderr.isTTY);
 const c = makeColors(isTTYErr);
 
 function printHelp(resolved) {
-  const defLabel = resolved.models.defaultModel || "Pi configured default (:low)";
   const fastLabel = resolved.models.fastModel || "auto fast sibling (:low)";
   const smartLabel = resolved.models.smartModel || "Pi configured default (:high)";
 
@@ -49,9 +48,9 @@ ${c.bold("Usage:")}
 ${c.bold("Options:")}
   -x, --execute        Allow running commands and editing files (bash/write/edit)
   -n, --dry-run        Read-only tools; print commands without executing (default)
-  -f, --fast           Use fast model (${fastLabel})
-  -s, --smart          Use high-thinking model (${smartLabel})
-  -m, --model <id>     Override model (default: ${defLabel})
+  -s, --smart          Use smart model (${smartLabel})
+  -f, --fast           Use fast model (default: ${fastLabel})
+  -m, --model <id>     Override model for this run
   -c, --context        Load project CLAUDE.md / AGENTS.md context files
   -0, --no-term        Skip shell history, terminal scrollback, and cwd snapshot
   -q, --quiet          Suppress tool progress on stderr (stdout only)
@@ -81,13 +80,17 @@ function printConfigReport(resolved) {
     `  pi binary:        ${resolved.piBin}`,
     `  piq config:       ${tildePath(resolved.paths.piqConfigPath)}${resolved.hasPiqConfigFile ? "" : " (not created)"}`,
     `  pi settings:      ${tildePath(resolved.paths.piSettingsPath)}${resolved.hasPiSettingsFile ? "" : " (not found)"}`,
-    `  default model:    ${resolved.models.defaultModel || "(defer to pi --thinking low)"}`,
-    `  fast model (-f):  ${resolved.models.fastModel || "(defer to pi --thinking low)"}`,
+    `  fast model:       ${resolved.models.fastModel || "(defer to pi --thinking low)"} (default)`,
     `  smart model (-s): ${resolved.models.smartModel || "(defer to pi --thinking high)"}`,
     `  provider exts:    ${resolved.extensions.length > 0 ? resolved.extensions.join(", ") : "(none needed)"}`,
     `  history source:   ${caps.historySource}`,
     `  scrollback:       ${caps.scrollbackSource}`,
   ];
+  if (resolved.models.legacyModelStatus === "ignored") {
+    lines.push(`  note: "model" / PIQ_MODEL is deprecated and ignored because a fast model is set; remove it.`);
+  } else if (resolved.models.legacyModelStatus === "used") {
+    lines.push(`  note: "model" / PIQ_MODEL is deprecated; rename it to "fastModel" / PIQ_FAST_MODEL.`);
+  }
   process.stdout.write(lines.join("\n") + "\n");
 }
 

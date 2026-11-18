@@ -5,6 +5,7 @@
 ### Breaking
 
 - **Read-only by default.** Without flags, the model only gets `read`, `ls`, `find`, and `grep` and prints the commands to run. Pass `-x` / `--execute` to allow `bash`, `write`, and `edit`. `-n` / `--dry-run` is still accepted (and is now the default).
+- **Fast model by default.** Runs use the fast tier unless `-s` / `--smart` is given; `-f` is still accepted. The separate "default" model is gone: config `model` / `PIQ_MODEL` are deprecated aliases for `fastModel` / `PIQ_FAST_MODEL`, used only when no fast model is set, and `piq --config` flags them.
 - **Options are only parsed before the first prompt word.** `piq what does ls -t do` keeps `-t` in the prompt instead of switching to the smart tier. Put flags first: `piq -x -s tidy this up`. `@file` arguments still work anywhere.
 
 ### Security
