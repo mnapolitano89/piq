@@ -28,7 +28,7 @@ const {
 } = require(path.join(ROOT_DIR, "lib", "context"));
 const { buildPiArgs } = require(path.join(ROOT_DIR, "lib", "pi-args"));
 const { renderShellInit } = require(path.join(ROOT_DIR, "lib", "shell"));
-const { makeColors, createStreamProcessor } = require(path.join(ROOT_DIR, "lib", "stream"));
+const { signalExitCode, makeColors, createStreamProcessor } = require(path.join(ROOT_DIR, "lib", "stream"));
 
 const isTTYErr = Boolean(process.stderr.isTTY);
 const c = makeColors(isTTYErr);
@@ -173,9 +173,30 @@ async function main() {
     process.stdin.pipe(child.stdin);
   }
 
+  // Forward termination signals so pi can stop cleanly, then exit through the child's
+  // close handler (which runs the context-file cleanup via process 'exit').
+  // Fall back to exiting ourselves if the child does not stop.
   process.on("SIGINT", () => {
     child.kill("SIGINT");
   });
+  for (const sig of ["SIGTERM", "SIGHUP"]) {
+    process.on(sig, () => {
+      child.kill(sig);
+      setTimeout(() => process.exit(signalExitCode(sig)), 2000).unref();
+    });
+  }
+
+  // Reader went away (`piq ... | head -1`): stop the child and exit like a
+  // SIGPIPE'd Unix tool (141) instead of crashing with an EPIPE stack trace.
+  process.stdout.on("error", (err) => {
+    if (err && err.code === "EPIPE") {
+      child.kill("SIGTERM");
+      process.exit(signalExitCode("SIGPIPE"));
+    }
+    throw err;
+  });
+  // Nowhere left to report stderr failures; never crash on them.
+  process.stderr.on("error", () => {});
 
   const processor = createStreamProcessor({
     stdout: process.stdout,
@@ -192,8 +213,8 @@ async function main() {
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk) => processor.feedStderrChunk(chunk));
 
-  child.on("close", (code) => {
-    process.exit(processor.finalize(code));
+  child.on("close", (code, signal) => {
+    process.exit(processor.finalize(code, signal));
   });
 }
 

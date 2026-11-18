@@ -93,7 +93,11 @@ Before spawning `pi`, `piq` runs bounded parallel probes (pass `-0` / `--no-term
    - Kitty (`kitty @ get-text` when `allow_remote_control` / `$KITTY_LISTEN_ON` is enabled)
    - iTerm2 (`it2 session read` when iTerm2's `it2` utility is installed)
 
-Values of secret-like environment variables (`*TOKEN`, `*SECRET`, `*PASSWORD`, `*API_KEY`, `*PAT`, etc.), `KEY=VALUE` assignments, `Bearer` headers, and common token prefixes (`sk-`, `ghp_`, `github_pat_`, `glpat-`, `xox*-`, `AKIA*`) are automatically redacted before entering the prompt.
+Secrets are redacted before anything enters the prompt (best effort, not a guarantee):
+
+- values of secret-named environment variables (`*TOKEN`, `*SECRET`, `*PASSWORD`, `*API_KEY`, `*ACCESS_KEY`, `PGPASSWORD`, `MYSQL_PWD`, `*_PAT`, etc.) wherever they appear
+- secret-named assignments and flags: `AWS_SECRET_ACCESS_KEY=…`, `--password=…`, `--token …`, `password: "…"`, `"api_key": "…"`, `?token=…`
+- credentials in URLs (`postgres://user:…@host`), `Bearer`/`Basic` headers, and common token prefixes (`sk-`, `ghp_`, `github_pat_`, `glpat-`, `xox*-`, `AKIA*`)
 
 The captured context is treated as **untrusted data**: scrollback can contain output from any program, file, or web page. It is written to a private `0600` temp file and attached to the user message as an `@file` (deleted when `piq` exits), never placed in the system prompt or on the command line, and the model is instructed not to follow instructions found inside it.
 
@@ -118,7 +122,11 @@ echo '[ -f ~/.config/piq/init.bash ] && source ~/.config/piq/init.bash' >> ~/.ba
 mkdir -p ~/.config/fish/conf.d && piq --init fish > ~/.config/fish/conf.d/piq.fish
 ```
 
-Each interactive pane logs only its rolling tail to a `0600` file under `$XDG_RUNTIME_DIR/piq/` (or `${TMPDIR:-/tmp}/piq-$UID/` when that is unset) and deletes it automatically when the pane closes. The hook refuses to log if that directory is a symlink or owned by another user, and resets its mode to `0700`.
+Each interactive pane logs only its rolling tail to a `0600` file under `$XDG_RUNTIME_DIR/piq/` (or `${TMPDIR:-/tmp}/piq-$UID/` when that is unset) and deletes it automatically when the pane closes. The hook refuses to log if that directory is a symlink or owned by another user, and resets its mode to `0700`. An existing bash `EXIT` trap is preserved and still runs after the hook's cleanup.
+
+## Exit Status
+
+`piq` exits with `pi`'s status. If `pi` is killed by a signal, `piq` exits `128 + N` (e.g. `130` after Ctrl-C), and `SIGTERM`/`SIGHUP` sent to `piq` are forwarded to `pi`. When the reader of `piq`'s stdout goes away (`piq … | head -1`), `piq` stops `pi` and exits `141`, like other Unix tools killed by `SIGPIPE`.
 
 ## Configuration & Model Resolution
 
