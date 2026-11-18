@@ -23,8 +23,10 @@ const {
   tildePath,
   detectContextCapabilities,
   buildTerminalContextBlock,
+  writeContextFile,
   buildSystemPrompt,
 } = require(path.join(ROOT_DIR, "lib", "context"));
+const { buildPiArgs } = require(path.join(ROOT_DIR, "lib", "pi-args"));
 const { renderShellInit } = require(path.join(ROOT_DIR, "lib", "shell"));
 const { makeColors, createStreamProcessor } = require(path.join(ROOT_DIR, "lib", "stream"));
 
@@ -44,7 +46,8 @@ ${c.bold("Usage:")}
   <cmd> | piq [options] <prompt...>
 
 ${c.bold("Options:")}
-  -n, --dry-run        Inspect only (read/ls/find/grep); print commands without executing
+  -x, --execute        Allow running commands and editing files (bash/write/edit)
+  -n, --dry-run        Read-only tools; print commands without executing (default)
   -f, --fast           Use fast model (${fastLabel})
   -s, --smart          Use high-thinking model (${smartLabel})
   -m, --model <id>     Override model (default: ${defLabel})
@@ -57,10 +60,13 @@ ${c.bold("Options:")}
   -V, --version        Show version
   -h, --help           Show this help
 
+Options are only read before the first prompt word, so
+\`piq what does ls -t do\` keeps \`-t\` in the prompt.
+
 ${c.bold("Examples:")}
   piq why did that last command fail
-  piq make a compressed tar.gz of all the t* folders here
-  piq -n clean up temp files and logs older than 7 days
+  piq what command cleans up logs older than 7 days
+  piq -x make a compressed tar.gz of all the t* folders here
   git diff | piq write a conventional commit message
 `.trimStart();
   process.stderr.write(help);
@@ -81,42 +87,6 @@ function printConfigReport(resolved) {
     `  scrollback:       ${caps.scrollbackSource}`,
   ];
   process.stdout.write(lines.join("\n") + "\n");
-}
-
-function buildPiArgs({ parsed, resolved, sysPrompt, promptText }) {
-  const toolsList = parsed.dryRun ? "read,ls,find,grep" : "bash,read,write,edit,ls,find,grep";
-  const piArgs = [
-    "--mode",
-    "json",
-    "--no-session",
-    "--no-extensions",
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-themes",
-    "--no-mcp",
-  ];
-
-  if (resolved.models.selectedModel && resolved.models.baseModel) {
-    piArgs.push("--models", resolved.models.baseModel, "--model", resolved.models.selectedModel);
-  } else {
-    piArgs.push("--thinking", resolved.models.fallbackThinking);
-  }
-
-  piArgs.push("--tools", toolsList, "--append-system-prompt", sysPrompt);
-
-  if (!parsed.withContext) {
-    piArgs.push("--no-context-files");
-  }
-  for (const ext of resolved.extensions) {
-    piArgs.push("-e", ext);
-  }
-  for (const f of parsed.fileArgs) {
-    piArgs.push(f);
-  }
-  if (promptText) {
-    piArgs.push("--", promptText);
-  }
-  return piArgs;
 }
 
 async function main() {
@@ -162,12 +132,24 @@ async function main() {
   const termContext = await buildTerminalContextBlock({
     noTermContext: parsed.noTermContext,
   });
+  // Terminal context is untrusted (scrollback can contain arbitrary program output),
+  // so it goes to Pi as a user-message @file attachment rather than system-prompt text.
+  const contextFile = termContext ? writeContextFile(termContext) : null;
+  if (contextFile) {
+    process.on("exit", contextFile.cleanup);
+  }
   const sysPrompt = buildSystemPrompt({
     cwd: process.cwd(),
-    dryRun: parsed.dryRun,
-    termContext,
+    execute: parsed.execute,
+    hasContextFile: Boolean(contextFile),
   });
-  const piArgs = buildPiArgs({ parsed, resolved, sysPrompt, promptText });
+  const piArgs = buildPiArgs({
+    parsed,
+    resolved,
+    sysPrompt,
+    promptText,
+    contextFilePath: contextFile ? contextFile.path : "",
+  });
 
   const child = spawn(resolved.piBin, piArgs, {
     stdio: [hasPipedStdin ? "pipe" : "ignore", "pipe", "pipe"],

@@ -4,6 +4,8 @@ Fast, terminal-aware one-off CLI runner for [Pi](https://pi.dev) (`@earendil-wor
 
 Interactive `pi` loads extensions, skills, prompt templates, themes, MCP servers, `CLAUDE.md`/`AGENTS.md` trees, and session history; `pi --print` buffers output until the entire multi-turn run finishes. `piq` strips startup down to bare `pi --mode json --no-session`, gathers live context from your current terminal pane in parallel (<400 ms), streams compact tool progress to `stderr`, and streams assistant text live to `stdout` so pipes stay clean.
 
+`piq` is **read-only by default**: the model can only use `read`, `ls`, `find`, and `grep`, and prints the commands you would run. Pass `-x` / `--execute` to let it run commands and edit files.
+
 Zero runtime npm dependencies (Node.js >= 18 built-ins only).
 
 ## Prerequisites
@@ -33,12 +35,15 @@ curl -fsSL https://raw.githubusercontent.com/mnapolitano89/piq/main/install.sh |
 # Ask about what just happened in your terminal pane
 piq why did that last command fail
 
-# Run quick shell/file tasks with live tool progress on stderr
-piq make a compressed tar.gz of all the build_* folders here
-piq what is taking up 20gb in this directory
+# Default (read-only): inspects files and prints the exact commands to run
+piq clean up temp files and logs older than 7 days
 
-# Dry-run mode (-n): read-only tools (read/ls/find/grep), prints exact commands without mutating
-piq -n clean up temp files and logs older than 7 days
+# Execute mode (-x): lets piq run commands and edit files, with live tool progress on stderr
+piq -x make a compressed tar.gz of all the build_* folders here
+piq -x what is taking up 20gb in this directory
+
+# Options are only read before the first prompt word, so shell flags stay in the prompt
+piq what does ls -t do
 
 # Pipe stdin in and pipe stdout out (tool progress stays on stderr, or -q to silence)
 git diff --staged | piq -q write a conventional commit message
@@ -57,7 +62,8 @@ piq -m anthropic/claude-sonnet-4-5:medium explain main.rs
 
 | Flag | Description |
 | --- | --- |
-| `-n, --dry-run` | Restrict tools to `read,ls,find,grep`; inspect and print commands without executing |
+| `-x, --execute` | Allow `bash`, `write`, and `edit` so piq can run commands and modify files |
+| `-n, --dry-run` | Read-only tools (`read,ls,find,grep`); inspect and print commands without executing (default) |
 | `-f, --fast` | Use fast model tier (`PIQ_FAST_MODEL`, config `fastModel`, or auto-detected fast sibling) |
 | `-s, --smart` (`-t, --think`) | Use high-thinking model tier (`:high`) |
 | `-m, --model <id>` | Override model (`provider/model` with optional `:<thinking>`) |
@@ -69,6 +75,8 @@ piq -m anthropic/claude-sonnet-4-5:medium explain main.rs
 | `--config` | Print resolved `pi` binary, model tiers, config paths, and active context sources |
 | `-V, --version` | Print version |
 | `-h, --help` | Print help |
+
+Options must come before the prompt: everything from the first non-option word onward (or after `--`) is prompt text. `@file` arguments are recognized anywhere.
 
 ## Terminal Context & Secret Redaction
 
@@ -86,6 +94,8 @@ Before spawning `pi`, `piq` runs bounded parallel probes (pass `-0` / `--no-term
    - iTerm2 (`it2 session read` when iTerm2's `it2` utility is installed)
 
 Values of secret-like environment variables (`*TOKEN`, `*SECRET`, `*PASSWORD`, `*API_KEY`, `*PAT`, etc.), `KEY=VALUE` assignments, `Bearer` headers, and common token prefixes (`sk-`, `ghp_`, `github_pat_`, `glpat-`, `xox*-`, `AKIA*`) are automatically redacted before entering the prompt.
+
+The captured context is treated as **untrusted data**: scrollback can contain output from any program, file, or web page. It is written to a private `0600` temp file and attached to the user message as an `@file` (deleted when `piq` exits), never placed in the system prompt or on the command line, and the model is instructed not to follow instructions found inside it.
 
 ### Optional Per-Pane Shell Hook (`piq --init`)
 
@@ -108,7 +118,7 @@ echo '[ -f ~/.config/piq/init.bash ] && source ~/.config/piq/init.bash' >> ~/.ba
 mkdir -p ~/.config/fish/conf.d && piq --init fish > ~/.config/fish/conf.d/piq.fish
 ```
 
-Each interactive pane logs only its rolling tail to a `0600` file under `${TMPDIR:-/tmp}/piq-$UID/` and deletes it automatically when the pane closes.
+Each interactive pane logs only its rolling tail to a `0600` file under `$XDG_RUNTIME_DIR/piq/` (or `${TMPDIR:-/tmp}/piq-$UID/` when that is unset) and deletes it automatically when the pane closes. The hook refuses to log if that directory is a symlink or owned by another user, and resets its mode to `0700`.
 
 ## Configuration & Model Resolution
 
