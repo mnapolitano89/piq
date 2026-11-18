@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [20, 22]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+      - name: Verify local installer
+        run: |
+          TMP_ROOT="$(mktemp -d)"
+          PIQ_INSTALL_DIR="$TMP_ROOT/share" PIQ_BIN_DIR="$TMP_ROOT/bin" sh ./install.sh --local
+          "$TMP_ROOT/bin/piq" --version
+          "$TMP_ROOT/bin/piq" --init zsh >/dev/null
+          "$TMP_ROOT/bin/piq" --init bash >/dev/null
+          "$TMP_ROOT/bin/piq" --init fish >/dev/null

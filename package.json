@@ -1,0 +1,38 @@
+{
+  "name": "@mnapolitano89/piq",
+  "version": "0.1.0",
+  "description": "Fast, terminal-aware one-off CLI runner for Pi (pi --mode json --no-session)",
+  "license": "MIT",
+  "author": "Michael Napolitano",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mnapolitano89/piq.git"
+  },
+  "homepage": "https://github.com/mnapolitano89/piq#readme",
+  "bugs": {
+    "url": "https://github.com/mnapolitano89/piq/issues"
+  },
+  "bin": {
+    "piq": "./bin/piq.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "pi",
+    "pi-coding-agent",
+    "cli",
+    "terminal",
+    "shell",
+    "ai"
+  ]
+}
