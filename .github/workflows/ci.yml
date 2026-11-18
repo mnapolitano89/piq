@@ -9,14 +9,10 @@ jobs:
   test:
     strategy:
       fail-fast: false
-      # Full Node range on Linux; macOS runners are scarce (jobs have been cancelled
-      # waiting for capacity) and its coverage (bash 3.2, BSD tools) is Node-independent.
+      # macOS runs in the separate, non-blocking ci-macos.yml workflow.
       matrix:
         os: [ubuntu-latest]
         node: [18, 20, 22]
-        include:
-          - os: macos-latest
-            node: 22
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -24,15 +20,8 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       # Shell-hook tests run against every shell present; make sure all three are.
-      - name: Install zsh and fish (Linux)
-        if: runner.os == 'Linux'
+      - name: Install zsh and fish
         run: sudo apt-get update -qq && sudo apt-get install -y -qq zsh fish
-      - name: Install fish (macOS)
-        if: runner.os == 'macOS'
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: "1"
-          HOMEBREW_NO_INSTALL_CLEANUP: "1"
-        run: brew install fish
       - name: Show shell versions
         run: |
           bash --version | head -1

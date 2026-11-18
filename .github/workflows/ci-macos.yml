@@ -1,0 +1,41 @@
+# Optional macOS coverage (bash 3.2, BSD userland). Kept out of the main CI
+# workflow because GitHub-hosted macOS arm64 runners are capacity-constrained:
+# jobs have been cancelled after ~15 minutes with "not acquired by Runner".
+# A failure or cancellation here does not affect the CI workflow's result.
+name: CI (macOS, optional)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    continue-on-error: true
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install fish
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: brew install fish
+      - name: Show shell versions
+        run: |
+          bash --version | head -1
+          zsh --version
+          fish --version
+      - run: npm test
+      - name: Verify local installer
+        run: |
+          TMP_ROOT="$(mktemp -d)"
+          PIQ_INSTALL_DIR="$TMP_ROOT/share" PIQ_BIN_DIR="$TMP_ROOT/bin" sh ./install.sh --local
+          "$TMP_ROOT/bin/piq" --version
+          "$TMP_ROOT/bin/piq" --init zsh >/dev/null
+          "$TMP_ROOT/bin/piq" --init bash >/dev/null
+          "$TMP_ROOT/bin/piq" --init fish >/dev/null
