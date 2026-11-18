@@ -27,6 +27,7 @@ const {
   buildSystemPrompt,
 } = require(path.join(ROOT_DIR, "lib", "context"));
 const { buildPiArgs } = require(path.join(ROOT_DIR, "lib", "pi-args"));
+const { classifyStdin, resolveStdinForwarding } = require(path.join(ROOT_DIR, "lib", "stdin"));
 const { renderShellInit } = require(path.join(ROOT_DIR, "lib", "shell"));
 const { signalExitCode, makeColors, createStreamProcessor } = require(path.join(ROOT_DIR, "lib", "stream"));
 
@@ -54,6 +55,7 @@ ${c.bold("Options:")}
   -c, --context        Load project CLAUDE.md / AGENTS.md context files
   -0, --no-term        Skip shell history, terminal scrollback, and cwd snapshot
   -q, --quiet          Suppress tool progress on stderr (stdout only)
+      --final          Print only the final answer (no intermediate narration)
   -v, --verbose        Stream live stdout/stderr from bash tool executions
       --init [shell]   Print per-pane shell hook (zsh, bash, or fish)
       --config         Show resolved models, pi binary, and active context sources
@@ -121,17 +123,24 @@ async function main() {
     process.exit(0);
   }
 
-  const hasPipedStdin = !process.stdin.isTTY;
   const promptText = parsed.promptWords.join(" ").trim();
+  const stdinMode = classifyStdin();
+  const needsStdinPrompt = !promptText && parsed.fileArgs.length === 0;
 
-  if (!promptText && parsed.fileArgs.length === 0 && !hasPipedStdin) {
+  if (needsStdinPrompt && stdinMode === "none") {
     printHelp(resolved);
     process.exit(1);
   }
 
-  const termContext = await buildTerminalContextBlock({
-    noTermContext: parsed.noTermContext,
-  });
+  const [forwardStdin, termContext] = await Promise.all([
+    resolveStdinForwarding({ mode: stdinMode }),
+    buildTerminalContextBlock({ noTermContext: parsed.noTermContext }),
+  ]);
+
+  if (needsStdinPrompt && !forwardStdin) {
+    printHelp(resolved);
+    process.exit(1);
+  }
   // Terminal context is untrusted (scrollback can contain arbitrary program output),
   // so it goes to Pi as a user-message @file attachment rather than system-prompt text.
   const contextFile = termContext ? writeContextFile(termContext) : null;
@@ -152,7 +161,7 @@ async function main() {
   });
 
   const child = spawn(resolved.piBin, piArgs, {
-    stdio: [hasPipedStdin ? "pipe" : "ignore", "pipe", "pipe"],
+    stdio: [forwardStdin ? "pipe" : "ignore", "pipe", "pipe"],
     env: process.env,
   });
 
@@ -168,21 +177,24 @@ async function main() {
     process.exit(127);
   });
 
-  if (hasPipedStdin && child.stdin) {
+  if (forwardStdin && child.stdin) {
     child.stdin.on("error", () => {});
     process.stdin.pipe(child.stdin);
   }
 
   // Forward termination signals so pi can stop cleanly, then exit through the child's
   // close handler (which runs the context-file cleanup via process 'exit').
-  // Fall back to exiting ourselves if the child does not stop.
+  // If the child ignores the signal, SIGKILL it rather than leaving an orphan behind.
   process.on("SIGINT", () => {
     child.kill("SIGINT");
   });
   for (const sig of ["SIGTERM", "SIGHUP"]) {
     process.on(sig, () => {
       child.kill(sig);
-      setTimeout(() => process.exit(signalExitCode(sig)), 2000).unref();
+      setTimeout(() => {
+        child.kill("SIGKILL");
+        process.exit(signalExitCode(sig));
+      }, 2000).unref();
     });
   }
 
@@ -203,6 +215,7 @@ async function main() {
     stderr: process.stderr,
     quiet: parsed.quiet,
     verbose: parsed.verbose,
+    finalOnly: parsed.finalOnly,
     isTTYErr,
     onAbortChild: () => child.kill("SIGTERM"),
   });
@@ -214,7 +227,10 @@ async function main() {
   child.stderr.on("data", (chunk) => processor.feedStderrChunk(chunk));
 
   child.on("close", (code, signal) => {
-    process.exit(processor.finalize(code, signal));
+    const exitCode = processor.finalize(code, signal);
+    // Pipe writes are async on macOS: exit only after stdout has flushed, or the
+    // tail of the answer (all of it with --final) can be lost.
+    process.stdout.write("", () => process.exit(exitCode));
   });
 }
 

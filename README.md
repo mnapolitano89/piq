@@ -46,7 +46,8 @@ piq -x what is taking up 20gb in this directory
 piq what does ls -t do
 
 # Pipe stdin in and pipe stdout out (tool progress stays on stderr, or -q to silence)
-git diff --staged | piq -q write a conventional commit message
+# --final prints only the final answer, without intermediate narration
+git diff --staged | piq -q --final write a conventional commit message
 kubectl describe pod api-7f8d | piq summarize why this pod is crash-looping
 
 # Attach files directly via Pi's @file syntax
@@ -71,6 +72,7 @@ piq -m anthropic/claude-sonnet-4-5:medium explain main.rs
 | `-0, --no-term` | Skip shell history, terminal scrollback, and `cwd` snapshot |
 | `-q, --quiet` | Suppress tool/retry progress on `stderr` (`stdout` answer only) |
 | `-v, --verbose` | Stream live trailing `stdout`/`stderr` lines from `bash` tool calls |
+| `--final` | Print only the final assistant answer at the end (no live streaming or intermediate narration) |
 | `--init [zsh\|bash\|fish]` | Print optional per-pane shell hook for exit codes and `cwd` breadcrumbs |
 | `--config` | Print resolved `pi` binary, model tiers, config paths, and active context sources |
 | `-V, --version` | Print version |
@@ -123,6 +125,10 @@ mkdir -p ~/.config/fish/conf.d && piq --init fish > ~/.config/fish/conf.d/piq.fi
 ```
 
 Each interactive pane logs only its rolling tail to a `0600` file under `$XDG_RUNTIME_DIR/piq/` (or `${TMPDIR:-/tmp}/piq-$UID/` when that is unset) and deletes it automatically when the pane closes. The hook refuses to log if that directory is a symlink or owned by another user, and resets its mode to `0700`. An existing bash `EXIT` trap is preserved and still runs after the hook's cleanup.
+
+## Stdin
+
+Stdin from a shell pipe (`cmd | piq …`) or a redirected file (`piq … < file`) is always forwarded to `pi`, however slowly it is produced. When stdin is a socket, as with editors, agent harnesses, or Node's `spawn`, `piq` forwards it only if data or EOF arrives within 300 ms, so an idle, never-closed stdin cannot hang the run.
 
 ## Exit Status
 

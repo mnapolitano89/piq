@@ -29,6 +29,7 @@ const { buildPiArgs, READ_ONLY_TOOLS, EXECUTE_TOOLS } = require("../lib/pi-args"
 const { renderShellInit } = require("../lib/shell");
 const { classifyError, createStreamProcessor, signalExitCode } = require("../lib/stream");
 const { isSecretKey, getShallowCwdListing, parseZshHistory: parseZsh } = require("../lib/context");
+const { classifyStdin, probeStdin } = require("../lib/stdin");
 
 const REPO_ROOT = path.resolve(__dirname, "..");
 const BIN_PATH = path.join(REPO_ROOT, "bin", "piq.js");
@@ -326,11 +327,11 @@ test("readPaneHookHistory parses exit codes + cwd trail and rejects symlinks", (
 });
 
 function runHook(shell, script, env) {
-  const probe =
-    shell === "zsh"
-      ? `source "$1"; print -r -- "LOG=$PIQ_PANE_LOG"`
-      : `source "$1"; printf 'LOG=%s\\n' "$PIQ_PANE_LOG"`;
-  const args = shell === "zsh" ? ["-f", "-i", "-c", probe, "zsh", script] : ["--norc", "--noprofile", "-i", "-c", probe, "bash", script];
+  const args = {
+    zsh: ["-f", "-i", "-c", `source "$1"; print -r -- "LOG=$PIQ_PANE_LOG"`, "zsh", script],
+    bash: ["--norc", "--noprofile", "-i", "-c", `source "$1"; printf 'LOG=%s\\n' "$PIQ_PANE_LOG"`, "bash", script],
+    fish: ["--no-config", "-i", "-c", `source $argv[1]; echo "LOG=$PIQ_PANE_LOG"`, script],
+  }[shell];
   const res = spawnSync(shell, args, { encoding: "utf8", env: { PATH: process.env.PATH, HOME: os.tmpdir(), ...env } });
   if (res.error) return null;
   const m = /^LOG=(.*)$/m.exec(res.stdout || "");
@@ -341,7 +342,7 @@ test("shell hooks only log inside a private, self-owned, non-symlinked directory
   const uid = typeof process.getuid === "function" ? process.getuid() : null;
   if (uid === null) return;
 
-  for (const shell of ["zsh", "bash"]) {
+  for (const shell of ["zsh", "bash", "fish"]) {
     if (spawnSync(shell, ["-c", "exit 0"]).error) continue;
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `piq-hook-${shell}-`));
     try {
@@ -471,6 +472,10 @@ test("renderShellInit produces valid zsh and bash hooks", () => {
   if (!zshCheck.error) {
     assert.equal(zshCheck.status, 0, zshCheck.stderr);
   }
+  const fishCheck = spawnSync("fish", ["--no-execute"], { input: fishScript, encoding: "utf8" });
+  if (!fishCheck.error) {
+    assert.equal(fishCheck.status, 0, fishCheck.stderr);
+  }
 });
 
 test("stream processor routes text to stdout, tools to stderr, and aborts repeated policy blocks", () => {
@@ -549,6 +554,73 @@ test("stream processor routes text to stdout, tools to stderr, and aborts repeat
   assert.match(err2, /aborting retries after repeated empty\/policy block/);
 });
 
+test("stream processor --final prints only the last answer; turns stay on separate lines", () => {
+  const events = [
+    { type: "message_start", message: { role: "assistant" } },
+    { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Let me check." } },
+    { type: "message_end", message: { role: "assistant", stopReason: "toolUse" } },
+    { type: "tool_execution_start", toolCallId: "t", toolName: "ls", args: { path: "." } },
+    { type: "tool_execution_end", toolCallId: "t", durationMs: 5 },
+    { type: "message_start", message: { role: "assistant" } },
+    { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "feat: add x" } },
+    { type: "message_end", message: { role: "assistant", stopReason: "stop" } },
+  ];
+  const run = (opts) => {
+    let out = "";
+    const p = createStreamProcessor({ stdout: { write: (s) => (out += s) }, stderr: { write() {} }, isTTYErr: false, ...opts });
+    for (const ev of events) p.handleEvent(ev);
+    const code = p.finalize(0);
+    return { out, code };
+  };
+
+  assert.equal(run({ quiet: true }).out, "Let me check.\nfeat: add x\n");
+  const fin = run({ quiet: true, finalOnly: true });
+  assert.equal(fin.out, "feat: add x\n");
+  assert.equal(fin.code, 0);
+
+  // No final answer is printed when the run ends in an error
+  let out = "";
+  const p = createStreamProcessor({ stdout: { write: (s) => (out += s) }, stderr: { write() {} }, isTTYErr: false, finalOnly: true });
+  p.handleEvent(events[0]);
+  p.handleEvent(events[1]);
+  p.handleEvent({ type: "message_end", message: { role: "assistant", stopReason: "error", errorMessage: "boom" } });
+  assert.equal(p.finalize(1), 1);
+  assert.equal(out, "");
+
+  assert.equal(parseArgs(["--final", "hi"]).finalOnly, true);
+  assert.equal(parseArgs(["hi", "--final"]).finalOnly, false);
+});
+
+test("stdin classification: FIFO/file forward, sockets are probed, /dev/null ignored", async () => {
+  assert.equal(classifyStdin(0, true), "none");
+  const devNull = fs.openSync("/dev/null", "r");
+  try {
+    assert.equal(classifyStdin(devNull, false), "none");
+  } finally {
+    fs.closeSync(devNull);
+  }
+  const tmpFile = path.join(os.tmpdir(), `piq-stdin-${process.pid}.txt`);
+  fs.writeFileSync(tmpFile, "x");
+  const fd = fs.openSync(tmpFile, "r");
+  try {
+    assert.equal(classifyStdin(fd, false), "pipe");
+  } finally {
+    fs.closeSync(fd);
+    fs.rmSync(tmpFile, { force: true });
+  }
+
+  const { PassThrough } = require("node:stream");
+  const idle = new PassThrough();
+  assert.equal(await probeStdin(idle, 50), "timeout");
+  const ended = new PassThrough();
+  ended.end();
+  assert.equal(await probeStdin(ended, 500), "eof");
+  const withData = new PassThrough();
+  withData.write("hello");
+  assert.equal(await probeStdin(withData, 500), "data");
+  assert.equal(String(withData.read()), "hello", "probed chunk is pushed back");
+});
+
 function writeMock(dir, name, body) {
   const p = path.join(dir, name);
   fs.writeFileSync(p, body, { mode: 0o755 });
@@ -615,6 +687,68 @@ setInterval(() => {}, 1000);
     child.kill("SIGTERM");
     assert.equal(await closed, 143);
     assert.equal(fs.existsSync(ctxPath), false, "context file removed after SIGTERM");
+
+    // 4. Never-written, never-closed stdin socket (agent harness / editor) must not hang pi
+    const echoPi = writeMock(
+      tmp,
+      "echo-pi",
+      `#!/usr/bin/env node
+let d = ""; try { d = require("fs").readFileSync(0, "utf8"); } catch {}
+process.stdout.write(JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "stdin=[" + d + "]" } }) + "\\n");
+`
+    );
+    const idle = require("node:child_process").spawn(BIN_PATH, ["-0q", "hi"], {
+      env: { ...env, PIQ_PI_BIN: echoPi },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let idleOut = "";
+    idle.stdout.on("data", (d) => (idleOut += d));
+    const idleCode = await new Promise((resolve) => {
+      const t = setTimeout(() => {
+        idle.kill("SIGKILL");
+        resolve("hung");
+      }, 5000);
+      idle.on("close", (code) => {
+        clearTimeout(t);
+        resolve(code);
+      });
+    });
+    assert.equal(idleCode, 0);
+    assert.equal(idleOut.trim(), "stdin=[]");
+
+    // 5. A child that ignores SIGHUP/SIGTERM is SIGKILLed, not orphaned, when piq gives up
+    const pidFile = path.join(tmp, "stubborn-pid");
+    const stubbornPi = writeMock(
+      tmp,
+      "stubborn-pi",
+      `#!/usr/bin/env node
+require("fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+process.on("SIGTERM", () => {});
+process.on("SIGHUP", () => {});
+setInterval(() => {}, 1000);
+`
+    );
+    const stub = require("node:child_process").spawn(BIN_PATH, ["-0q", "hi"], {
+      env: { ...env, PIQ_PI_BIN: stubbornPi },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stubClosed = new Promise((resolve) => stub.on("close", (code) => resolve(code)));
+    for (let i = 0; i < 100 && !fs.existsSync(pidFile); i++) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const stubPid = Number(fs.readFileSync(pidFile, "utf8"));
+    try {
+      stub.kill("SIGHUP");
+      assert.equal(await stubClosed, 129);
+      await new Promise((r) => setTimeout(r, 200));
+      assert.throws(() => process.kill(stubPid, 0), { code: "ESRCH" }, "stubborn child must not outlive piq");
+    } finally {
+      try {
+        process.kill(stubPid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+    }
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

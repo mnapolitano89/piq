@@ -1,6 +1,6 @@
 {
   "name": "@mnapolitano89/piq",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Fast, terminal-aware one-off CLI runner for Pi (pi --mode json --no-session)",
   "license": "MIT",
   "author": "Michael Napolitano",
@@ -19,11 +19,16 @@
     "bin/",
     "lib/",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "engines": {
     "node": ">=18.0.0"
   },
+  "os": [
+    "darwin",
+    "linux"
+  ],
   "scripts": {
     "test": "node --test test/*.test.js"
   },

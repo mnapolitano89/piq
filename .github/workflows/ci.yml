@@ -11,13 +11,28 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node: [20, 22]
+        node: [18, 20, 22]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+      # Shell-hook tests run against every shell present; make sure all three are.
+      - name: Install zsh and fish (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq zsh fish
+      - name: Install fish (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: brew install fish
+      - name: Show shell versions
+        run: |
+          bash --version | head -1
+          zsh --version
+          fish --version
       - run: npm test
       - name: Verify local installer
         run: |
