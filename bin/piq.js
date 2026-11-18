@@ -4,7 +4,7 @@
 "use strict";
 
 /**
- * piq — Fast, terminal-aware one-off CLI runner for Pi (`pi --mode json --no-session`)
+ * piq — Fast, terminal-aware one-off CLI runner for Pi (`pi --mode json`)
  *
  * Strips startup bloat (extensions, skills, context files, session persistence)
  * while gathering live terminal context in parallel and streaming tool executions
@@ -30,6 +30,8 @@ const { buildPiArgs } = require(path.join(ROOT_DIR, "lib", "pi-args"));
 const { classifyStdin, resolveStdinForwarding } = require(path.join(ROOT_DIR, "lib", "stdin"));
 const { renderShellInit } = require(path.join(ROOT_DIR, "lib", "shell"));
 const { signalExitCode, makeColors, createStreamProcessor } = require(path.join(ROOT_DIR, "lib", "stream"));
+const sessions = require(path.join(ROOT_DIR, "lib", "sessions"));
+const { planAttach } = require(path.join(ROOT_DIR, "lib", "attach"));
 
 const isTTYErr = Boolean(process.stderr.isTTY);
 const c = makeColors(isTTYErr);
@@ -53,6 +55,7 @@ ${c.bold("Options:")}
   -m, --model <id>     Override model for this run
   -c, --context        Load project CLAUDE.md / AGENTS.md context files
   -0, --no-term        Skip shell history, terminal scrollback, and cwd snapshot
+  -a, --attach         Continue your last piq call in interactive pi
   -q, --quiet          Suppress tool progress on stderr (stdout only)
       --final          Print only the final answer (no intermediate narration)
   -v, --verbose        Stream live stdout/stderr from bash tool executions
@@ -94,6 +97,82 @@ function printConfigReport(resolved) {
   process.stdout.write(lines.join("\n") + "\n");
 }
 
+function exitOnSpawnError(err, piBin) {
+  if (err && err.code === "ENOENT") {
+    process.stderr.write(
+      `${c.red("piq error:")} Could not find \`pi\` executable ("${piBin}").\n` +
+        `${c.dim("Install Pi first (https://pi.dev) or set PIQ_PI_BIN=/path/to/pi.")}\n`
+    );
+  } else {
+    process.stderr.write(`${c.red("piq error:")} ${err?.message || err}\n`);
+  }
+  process.exit(127);
+}
+
+/** `piq --attach`: continue the last saved piq call in the user's interactive pi. */
+function runAttach(parsed, resolved) {
+  if (parsed.promptWords.length > 0 || parsed.fileArgs.length > 0) {
+    process.stderr.write("piq: --attach does not take a prompt or @files; ask your follow-up inside pi\n");
+    process.exit(2);
+  }
+  const stateDir = sessions.getStateDir();
+  const sessionFile = sessions.readLastSession(stateDir);
+  if (!sessionFile) {
+    process.stderr.write("piq: no previous piq session to attach to\n");
+    process.exit(1);
+  }
+  // pi falls back to non-interactive print mode when stdin or stdout is not a terminal.
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    process.stderr.write("piq: --attach needs an interactive terminal (stdin and stdout must be a TTY)\n");
+    process.exit(2);
+  }
+
+  const plan = planAttach({
+    sessionFile,
+    sessionInfo: sessions.readSessionInfo(sessionFile),
+    parsed,
+    resolved,
+  });
+  for (const note of plan.notes) {
+    process.stderr.write(`${c.dim(`piq: ${note}`)}\n`);
+  }
+
+  const child = spawn(resolved.piBin, plan.piArgs, { cwd: plan.cwd, stdio: "inherit", env: process.env });
+  child.on("error", (err) => exitOnSpawnError(err, resolved.piBin));
+  // pi owns the terminal: Ctrl-C reaches it directly, so piq must not die from it.
+  process.on("SIGINT", () => {});
+  for (const sig of ["SIGTERM", "SIGHUP"]) {
+    process.on(sig, () => child.kill(sig));
+  }
+  child.on("close", (code, signal) => {
+    process.exit(code ?? signalExitCode(signal));
+  });
+}
+
+/**
+ * Prepare a session file for this run so `piq --attach` can continue it. Returns the path,
+ * or "" (run unsaved) if the state dir is unsafe. After exit, record it as the last session
+ * and prune older ones; failures here never affect the exit status.
+ */
+function prepareSessionSaving() {
+  const stateDir = sessions.getStateDir();
+  const dirs = sessions.ensureStateDirs(stateDir);
+  if (!dirs.ok) {
+    process.stderr.write(`${c.dim(`piq: not saving this session (${dirs.reason}); --attach will be unavailable`)}\n`);
+    return "";
+  }
+  const sessionPath = sessions.newSessionPath(dirs.sessionsDir);
+  process.on("exit", () => {
+    try {
+      sessions.recordLastSession(stateDir, sessionPath);
+      sessions.pruneSessions(stateDir);
+    } catch {
+      // best effort
+    }
+  });
+  return sessionPath;
+}
+
 async function main() {
   const parsed = parseArgs(process.argv.slice(2));
   if (parsed.error) {
@@ -124,6 +203,11 @@ async function main() {
   if (parsed.showConfig) {
     printConfigReport(resolved);
     process.exit(0);
+  }
+
+  if (parsed.attach) {
+    runAttach(parsed, resolved);
+    return;
   }
 
   const promptText = parsed.promptWords.join(" ").trim();
@@ -161,6 +245,7 @@ async function main() {
     sysPrompt,
     promptText,
     contextFilePath: contextFile ? contextFile.path : "",
+    sessionPath: prepareSessionSaving(),
   });
 
   const child = spawn(resolved.piBin, piArgs, {
@@ -168,17 +253,7 @@ async function main() {
     env: process.env,
   });
 
-  child.on("error", (err) => {
-    if (err && err.code === "ENOENT") {
-      process.stderr.write(
-        `${c.red("piq error:")} Could not find \`pi\` executable ("${resolved.piBin}").\n` +
-          `${c.dim("Install Pi first (https://pi.dev) or set PIQ_PI_BIN=/path/to/pi.")}\n`
-      );
-    } else {
-      process.stderr.write(`${c.red("piq error:")} ${err?.message || err}\n`);
-    }
-    process.exit(127);
-  });
+  child.on("error", (err) => exitOnSpawnError(err, resolved.piBin));
 
   if (forwardStdin && child.stdin) {
     child.stdin.on("error", () => {});

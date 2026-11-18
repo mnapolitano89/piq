@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 (unreleased)
+
+### Added
+
+- `-a` / `--attach`: continue the last piq call in your full interactive `pi` session (extensions, skills, all tools), in the call's original directory and with the same model. `-s` / `-m` switch model when attaching.
+- Each run is saved as a pi session under `${XDG_STATE_HOME:-~/.local/state}/piq/sessions/` (private `0700` directory). Only the most recent run is kept.
+
 ## 0.2.0
 
 ### Breaking

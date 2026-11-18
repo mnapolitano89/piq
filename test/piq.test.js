@@ -647,6 +647,7 @@ test("bin/piq.js propagates child signals, exits 141 on EPIPE, and cleans up on 
     ...process.env,
     PIQ_CONFIG: path.join(tmp, "none.json"),
     PI_CODING_AGENT_DIR: path.join(tmp, "pi-agent"),
+    XDG_STATE_HOME: path.join(tmp, "state"),
     PIQ_DISABLE_ATUIN: "1",
   };
   try {
@@ -814,6 +815,7 @@ process.stdout.write(JSON.stringify({ type: "message_end", message: { role: "ass
       PIQ_PI_BIN: mockPi,
       PIQ_CONFIG: path.join(tmpRoot, "none.json"),
       PI_CODING_AGENT_DIR: path.join(tmpRoot, "pi-agent"),
+      XDG_STATE_HOME: path.join(tmpRoot, "state"),
     };
     const res = spawnSync(installedPiq, ["-0q", "-m", "openai/gpt-5:low", "summarize", "diff"], {
       input: "diff --git a/x b/x\n",

@@ -2,7 +2,7 @@
 
 Fast, terminal-aware one-off CLI runner for [Pi](https://pi.dev) (`@earendil-works/pi-coding-agent`).
 
-Interactive `pi` loads extensions, skills, prompt templates, themes, MCP servers, `CLAUDE.md`/`AGENTS.md` trees, and session history; `pi --print` buffers output until the entire multi-turn run finishes. `piq` strips startup down to bare `pi --mode json --no-session`, gathers live context from your current terminal pane in parallel (<400 ms), streams compact tool progress to `stderr`, and streams assistant text live to `stdout` so pipes stay clean.
+Interactive `pi` loads extensions, skills, prompt templates, themes, MCP servers, `CLAUDE.md`/`AGENTS.md` trees, and session history; `pi --print` buffers output until the entire multi-turn run finishes. `piq` strips startup down to bare `pi --mode json`, gathers live context from your current terminal pane in parallel (<400 ms), streams compact tool progress to `stderr`, and streams assistant text live to `stdout` so pipes stay clean.
 
 `piq` is **read-only by default**: the model can only use `read`, `ls`, `find`, and `grep`, and prints the commands you would run. Pass `-x` / `--execute` to let it run commands and edit files.
 
@@ -57,6 +57,9 @@ piq @error.log @config.yaml explain the mismatch causing this crash
 piq convert timestamp 1763480000 to UTC      # fast tier (default)
 piq -s audit this script for race conditions # smart tier
 piq -m anthropic/claude-sonnet-4-5:medium explain main.rs
+
+# Continue the last piq call in your full interactive pi session
+piq -a
 ```
 
 ## Options
@@ -73,6 +76,7 @@ piq -m anthropic/claude-sonnet-4-5:medium explain main.rs
 | `-q, --quiet` | Suppress tool/retry progress on `stderr` (`stdout` answer only) |
 | `-v, --verbose` | Stream live trailing `stdout`/`stderr` lines from `bash` tool calls |
 | `--final` | Print only the final assistant answer at the end (no live streaming or intermediate narration) |
+| `-a, --attach` | Continue the last piq call in interactive `pi` (see [Attaching](#attaching-to-the-last-call)) |
 | `--init [zsh\|bash\|fish]` | Print optional per-pane shell hook for exit codes and `cwd` breadcrumbs |
 | `--config` | Print resolved `pi` binary, model tiers, config paths, and active context sources |
 | `-V, --version` | Print version |
@@ -125,6 +129,21 @@ mkdir -p ~/.config/fish/conf.d && piq --init fish > ~/.config/fish/conf.d/piq.fi
 ```
 
 Each interactive pane logs only its rolling tail to a `0600` file under `$XDG_RUNTIME_DIR/piq/` (or `${TMPDIR:-/tmp}/piq-$UID/` when that is unset) and deletes it automatically when the pane closes. The hook refuses to log if that directory is a symlink or owned by another user, and resets its mode to `0700`. An existing bash `EXIT` trap is preserved and still runs after the hook's cleanup.
+
+## Attaching to the Last Call
+
+`piq -a` opens your normal interactive `pi` (extensions, skills, all tools, `AGENTS.md`) with the last piq call's conversation already loaded, so a quick question can turn into real work without re-explaining it:
+
+```sh
+piq why is the build failing
+piq -a            # follow up, edit files, run commands in full pi
+```
+
+- It runs in the directory where the piq call ran (or the current one if that directory is gone) and keeps the model the call used. `piq -a -s` or `piq -a -m <model>` switches model.
+- The conversation is forked into a new pi session, so it also shows up in `pi --resume`. Running `piq -a` again starts over from the piq call; use `pi --continue` or `pi --resume` to get back to the interactive conversation.
+- `--attach` needs an interactive terminal and takes no prompt; ask your follow-up inside pi.
+
+To make this possible, each piq run is saved as a pi session under `${XDG_STATE_HOME:-~/.local/state}/piq/sessions/` (a private `0700` directory). Only the most recent run is kept; older ones are deleted when the next run finishes. A saved session contains your prompt, the answer, tool output, and the redacted terminal context. If the directory is unsafe (a symlink, owned by another user), piq warns and runs without saving.
 
 ## Stdin
 
