@@ -58,8 +58,9 @@ piq convert timestamp 1763480000 to UTC      # fast tier (default)
 piq -s audit this script for race conditions # smart tier
 piq -m anthropic/claude-sonnet-4-5:medium explain main.rs
 
-# Continue the last piq call in your full interactive pi session
-piq -a
+# Continue the last piq call in your full interactive pi session (-a / --attach)
+piq --attach                                 # or: piq -a
+piq --attach -s                              # attach and switch to the smart model
 ```
 
 ## Options
@@ -132,7 +133,7 @@ Each interactive pane logs only its rolling tail to a `0600` file under `$XDG_RU
 
 ## Attaching to the Last Call
 
-`piq -a` opens your normal interactive `pi` (extensions, skills, all tools, `AGENTS.md`) with the last piq call's conversation already loaded, so a quick question can turn into real work without re-explaining it:
+`piq --attach` (`piq -a`) opens your normal interactive `pi` (extensions, skills, all tools, `AGENTS.md`) with the last piq call's conversation already loaded, so a quick question can turn into real work without re-explaining it:
 
 ```sh
 piq why is the build failing
