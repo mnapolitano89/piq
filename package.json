@@ -1,6 +1,6 @@
 {
   "name": "@mnapolitano89/piq",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Fast, terminal-aware one-off CLI runner for Pi",
   "license": "MIT",
   "author": "Michael Napolitano",
